@@ -50,7 +50,7 @@ int initiateFiles(FILE *p_insere, FILE *p_remove) {
                               {"44444444444", "ERT4561"}};
 
   for (int i=0; i < 4; i++) {
-    sprintf(registro, "%s%s|", regs_id_list[i].cod_cli, regs_id_list[i].cod_vei);
+    sprintf(registro, "%s|%s|", regs_id_list[i].cod_cli, regs_id_list[i].cod_vei);
     size_reg = strlen(registro);
 
     fwrite(&size_reg, sizeof(int), 1, p_remove);
@@ -90,7 +90,7 @@ int pull_field(char *p_register, int *p_pos, char *p_field) {
   return strlen(p_field);
 }
 
-void assign_register(FILE *p_insere, veic_t *p_regs_locs_vei, reg_id_t *p_regs_id_list) { 
+void assign_register_insere(FILE *p_insere, veic_t *p_regs_locs_vei) { 
   int size_reg, num_register = 0;
   char rental_register[120];
   size_reg = pull_register(p_insere, rental_register);
@@ -134,7 +134,78 @@ void assign_register(FILE *p_insere, veic_t *p_regs_locs_vei, reg_id_t *p_regs_i
     size_reg = pull_register(p_insere, rental_register);
     num_register++;
   }
+}
 
+void assign_register_remove(FILE *p_remove, reg_id_t *regs_id_list) {
+  int size_reg, num_register = 0;
+  char remove_register[21];
+
+  size_reg = pull_register(p_remove, remove_register);
+
+  while(size_reg > 0) {
+    char field[12];
+    int index = 0, ind_field = 0;
+
+    for(int i=0; i<size_reg; i++) {
+      field[index] = remove_register[i];
+      if(field[index] == '|') {
+        field[index] = '\0';
+
+        switch(ind_field) {
+          case 0: 
+            strcpy(regs_id_list[num_register].cod_cli, field);
+            break;
+          case 1:
+            strcpy(regs_id_list[num_register].cod_vei, field);
+            break;
+        }
+
+        ind_field++;
+        index=0;
+        continue;
+      }
+
+      index++;
+    }
+
+    size_reg = pull_register(p_remove, remove_register);
+    num_register++;
+  }
+}
+
+int find_register(FILE *p_rents, char *cod_cli, char *cod_vei, int *header) {
+  char key_1[12], key_2[8], reg_size, ch;
+  int i=0, next_position=4;
+
+  fread(header, sizeof(int), 1, p_rents);
+
+  while(fread(&reg_size, sizeof(char), 1, p_rents)) { //le enquanto nao chega no fim do arquivo
+    i=0;
+    fread(&ch, sizeof(char), 1, p_rents);
+    while(ch!='\0' && ch!='|') {
+      key_1[i] = ch;
+      i++;
+      fread(&ch, sizeof(char), 1, p_rents);
+    }
+    
+    i=0;
+    fread(&ch, sizeof(char), 1, p_rents);
+    while(ch!='\0' && ch!='|') {
+      key_2[i] = ch;
+      i++;
+      fread(&ch, sizeof(char), 1, p_rents);
+    }
+    key_2[7] = '\0';
+
+    if( !(strcmp(key_1, cod_cli)) && !(strcmp(key_2, cod_vei)) ) {
+      return next_position;
+    }
+
+    next_position += (int)reg_size+1;
+    fseek(p_rents, next_position, SEEK_SET);
+  }
+
+  return 0;
 }
 
 int insert(FILE *p_insere, FILE *p_rents, veic_t *p_regs_locs_vei) {
@@ -179,6 +250,45 @@ int insert(FILE *p_insere, FILE *p_rents, veic_t *p_regs_locs_vei) {
   printf("%s \n", p_regs_locs_vei[option].cod_cli);
 }
 
+void delete(FILE *p_remove, FILE *p_rents, reg_id_t *p_regs_id_list) {
+  int option, position, header;
+
+  printf("-------------------------------------------------------\n");
+  printf("Digite o número da opção que deseja remover:\n\n");
+
+  for(int i=0;i<4;i++) {
+    printf("%d - ", i+1);
+    printf("%s ", p_regs_id_list[i].cod_cli);
+    printf("%s \n", p_regs_id_list[i].cod_vei);
+  }
+
+  scanf("%d", &option);
+  clearBuffer();
+  option--;
+  while(option <0 || option>3) {
+    printf("Opcao invalida, por favor digite novamente: ");
+    scanf("%d", &option);
+    clearBuffer();
+    option--;
+  }
+
+  position = find_register(p_rents, p_regs_id_list[option].cod_cli, p_regs_id_list[option].cod_vei, &header);
+  if(position) {
+    char char_remove = '*';
+
+    fseek(p_rents, position+1, SEEK_SET); //posiciona no inicio do registro a ser removido
+
+    fwrite(&char_remove, sizeof(char), 1, p_rents); //Adiciona o caracter que indica que o registro foi removido
+    fwrite(&header, sizeof(int), 1, p_rents); //Atualiza a pilha, adiciona o endereco que estava no header para colocar o endereco atual no topo da pilha
+    rewind(p_rents);
+    fwrite(&position, sizeof(int), 1, p_rents); //Atualiza o topo do pilha com o endereco do registro atual
+    rewind(p_rents);
+  } else {
+    printf("Registro nao cadastrado\n");
+  }
+  
+}
+
 int main() {
   int option;
   FILE *insere, *remove, *rents;
@@ -200,6 +310,8 @@ int main() {
       printf("Nao foi possivel criar o arquivo rents.bin");
       return 0;
     }
+    int header = -1;
+    fwrite(&header, sizeof(int), 1, rents); //Inicializa o header do arquivo, indicando que nao ha espaços livres resultantes de remoção de registros.
   } else { //E se ja existir, vai abrir o arquivo para escrita e leitura
     fclose(rents);
 
@@ -208,10 +320,15 @@ int main() {
       return 0;
     }
   }
+  
 
   initiateFiles(insere, remove); //Insere os dados nos arquivos de insere.bin e remove.bin
+  
   fseek(insere, 0, 0);
-  assign_register(insere, regs_locs_vei, regs_id_list); //Vai pegar os valores do arquivo insere.bin e coloca-los na memoria principal, em um vetor
+  assign_register_insere(insere, regs_locs_vei); //Vai pegar os valores do arquivo insere.bin e coloca-los na memoria principal, em um vetor
+  
+  fseek(remove, 0, 0);
+  assign_register_remove(remove, regs_id_list); //Vai pegar os valores do arquivo remove.bin e coloca-los na memoria principal, em um vetor
 
   printf("-------------------------\n");
   printf("Escolha uma opção: \n");
@@ -231,7 +348,9 @@ int main() {
         break;
       }
       case 2: {
-
+        fseek(remove, 0, 0);
+        fseek(rents, 0, 0);
+        delete(remove, rents, regs_id_list);
         break;
       }
       case 3: {
