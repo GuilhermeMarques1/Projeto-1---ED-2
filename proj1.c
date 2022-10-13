@@ -70,26 +70,6 @@ int pull_register(FILE *p_insere, char *p_reg) {
   }
 }
 
-int pull_field(char *p_register, int *p_pos, char *p_field) {
-  char ch;
-  int i = 0;
-
-  p_field[i] = '\0';
-  ch = p_register[*p_pos];
-
-  while ((ch != '|') && (ch != '\0'))
-  {
-    p_field[i] = ch;
-    i++;
-    ch = p_register[++(*p_pos)];
-  }
-
-  ++(*p_pos);
-  p_field[i] = '\0';
-
-  return strlen(p_field);
-}
-
 void assign_register_insere(FILE *p_insere, veic_t *p_regs_locs_vei) { 
   int size_reg, num_register = 0;
   char rental_register[120];
@@ -209,8 +189,8 @@ int find_register(FILE *p_rents, char *cod_cli, char *cod_vei, int *header) {
 }
 
 int insert(FILE *p_insere, FILE *p_rents, veic_t *p_regs_locs_vei) {
-  int size_reg , option, ind=1;
-  char insert_register[120];
+  int size_reg , option, ind=1, position;
+  char insert_register[120], ch;
 
   printf("-------------------------------------------------------\n");
   printf("Digite o número da opção que deseja inserir:\n\n");
@@ -239,14 +219,48 @@ int insert(FILE *p_insere, FILE *p_rents, veic_t *p_regs_locs_vei) {
     clearBuffer();
   }
 
-
   sprintf(insert_register, "%s|%s|%s|%s|%s|", p_regs_locs_vei[option].cod_cli, p_regs_locs_vei[option].cod_vei, p_regs_locs_vei[option].client, p_regs_locs_vei[option].veiculo, p_regs_locs_vei[option].dias);
   size_reg = strlen(insert_register);
 
+  rewind(p_rents); //volta ao inicio do arquivo
+  
+  fread(&position, sizeof(int), 1, p_rents); //Le o header para ver se ha algum endereco livre
+  while(position != -1) {
+    char size_free;
+    fseek(p_rents, position, SEEK_SET);
+    fread(&size_free, sizeof(char), 1, p_rents);
+    
+    if(size_free >= size_reg) {
+      fread(&ch, sizeof(char), 1, p_rents); //le o caracter '*'
+      fread(&position, sizeof(int), 1, p_rents);
+      fseek(p_rents, -1-4, SEEK_CUR);
+      fwrite(insert_register, sizeof(char), size_reg, p_rents);
+      
+      int size_fragments;
+      size_fragments = size_free > size_reg ? size_free - size_reg : 0;
+      char frag[size_fragments];
+      for(int i=0;i<size_fragments; i++) frag[i] = '#'; 
+      printf("FRAG: %s \n", frag);
+      fwrite(frag, sizeof(char), size_fragments, p_rents);  //Preencher o fragmentacao externa com o caracter '#'
+
+      rewind(p_rents);
+      fwrite(&position, sizeof(int), 1, p_rents); //Atualiza o header, "desempilha"
+
+      strcpy(p_regs_locs_vei[option].cod_cli, "***"); //Desconsidera o registro já inserido, para evitar que dois dados iguais sejam inseridos no arquivo
+      printf("%s \n", p_regs_locs_vei[option].cod_cli);
+      
+      return 1;   
+    } else {
+      fread(&ch, sizeof(char), 1, p_rents); //Le o caracter que indica que o registro foi removido '*'
+      fread(&position, sizeof(char), 1, p_rents); //Le o indicador de proximo campo livre
+    }
+  }
+
+  while(fread(&ch, sizeof(char), 1, p_rents)); //posiciona no fim do arquivo
   fwrite(&size_reg, sizeof(char), 1, p_rents);
   fwrite(insert_register, sizeof(char), size_reg, p_rents);
 
-  strcpy(p_regs_locs_vei[option].cod_cli, "***"); //Desconsidera o registro já escolhido para ser inserido na lista
+  strcpy(p_regs_locs_vei[option].cod_cli, "***"); //Desconsidera o registro já inserido, para evitar que dois dados iguais sejam inseridos no arquivo
   printf("%s \n", p_regs_locs_vei[option].cod_cli);
 }
 
@@ -320,7 +334,6 @@ int main() {
       return 0;
     }
   }
-  
 
   initiateFiles(insere, remove); //Insere os dados nos arquivos de insere.bin e remove.bin
   
@@ -357,14 +370,9 @@ int main() {
 
         break;
       }
-      case 4: {
-        printf("saindo...\n");
-        break;
-      }
       default:
         printf("Opção invalida, por favor digite novamente\n");
     }
-    // system("clear");
     printf("-------------------------\n");
     printf("Escolha uma opção: \n");
     printf("1 - Inserir novo aluguel\n");
