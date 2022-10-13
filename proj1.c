@@ -236,12 +236,13 @@ int insert(FILE *p_insere, FILE *p_rents, veic_t *p_regs_locs_vei) {
       fseek(p_rents, -1-4, SEEK_CUR);
       fwrite(insert_register, sizeof(char), size_reg, p_rents);
       
-      int size_fragments;
-      size_fragments = size_free > size_reg ? size_free - size_reg : 0;
-      char frag[size_fragments];
-      for(int i=0;i<size_fragments; i++) frag[i] = '#'; 
-      printf("FRAG: %s \n", frag);
-      fwrite(frag, sizeof(char), size_fragments, p_rents);  //Preencher o fragmentacao externa com o caracter '#'
+      if(size_free > size_reg) {
+        int size_fragments = size_free - size_reg;
+        char frag[size_fragments];
+        for(int i=0;i<size_fragments; i++) frag[i] = '#'; 
+        printf("FRAG: %s \n", frag);
+        fwrite(frag, sizeof(char), size_fragments, p_rents);  //Preencher o fragmentacao externa com o caracter '#'
+      }
 
       rewind(p_rents);
       fwrite(&position, sizeof(int), 1, p_rents); //Atualiza o header, "desempilha"
@@ -301,6 +302,50 @@ void delete(FILE *p_remove, FILE *p_rents, reg_id_t *p_regs_id_list) {
     printf("Registro nao cadastrado\n");
   }
   
+}
+
+void compression(FILE *p_rents) {
+  FILE *copy_rent;
+  char ch, reg_size;
+  int header=-1, hd;
+
+  if((copy_rent = fopen("copy.bin", "w+b")) == NULL) {
+    printf("Nao foi possivel criar o arquivo copy.bin");
+    return ;
+  }
+
+  fread(&hd, sizeof(int), 1, p_rents);
+  fwrite(&header, sizeof(int), 1, copy_rent);
+
+  while(fread(&reg_size, sizeof(char), 1, p_rents)) {
+    // fread(&reg_size, sizeof(char), 1, p_rents);
+    printf("%d ", (int)reg_size);
+
+    int reg_int = (int)reg_size;
+    char *reg;
+
+    fread(&ch, sizeof(char), 1, p_rents);
+    
+    if(ch == '*') {
+      fseek(p_rents, reg_int-1, SEEK_CUR);
+    } else {
+      if(ch == '#') {  //resultado de fragmentacao externa indicado por '#' sera ignorado
+        fread(&ch, sizeof(char), 1, p_rents);
+        while(ch == '#') {
+          fread(&ch, sizeof(char), 1, p_rents);
+        }
+      } else {
+        fwrite(&reg_size, sizeof(char), 1, copy_rent);
+
+        fseek(p_rents, -1, SEEK_CUR);
+        fread(&ch, sizeof(char), 1, p_rents);
+
+        reg = (char *)malloc(sizeof(char)*reg_int);
+        fread(reg, sizeof(char), reg_int, p_rents);
+        fwrite(reg, sizeof(char), reg_int, copy_rent);
+      }
+    }
+  }
 }
 
 int main() {
@@ -367,7 +412,8 @@ int main() {
         break;
       }
       case 3: {
-
+        fseek(rents, 0, 0);
+        compression(rents);
         break;
       }
       default:
